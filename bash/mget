@@ -1,0 +1,86 @@
+#!/bin/bash
+####define#####
+OUT_DIR='tasktmp'
+task_file=$1
+
+thread=100
+
+####functions######
+
+usage(){
+	echo "$0 taskfile"
+	exit
+}
+
+function singleThread(){
+	#----define------#
+	line=$1
+	out_dir=$2
+	#---------------	
+	task_id=$(echo $line|cut -d'`' -f1)
+	task_name=$(echo $line|cut -d'`' -f2)
+	task_url=$(echo $line|cut -d'`' -f3)
+
+	out_file="$out_dir/$task_id.tmp"
+	#----main------#
+	if [ ! -f "${out_file}" ] ;then
+		cur_url="${task_url}" 
+		curl -s $cur_url -o "${out_file}"
+	else
+		return 1
+	fi
+	return 0
+}
+
+function mutiThread(){
+	#----define------#
+	task_file=$1  ##task list 
+	thread=$2 ##running thread nums
+
+	task_num=$(wc -l $task_file |cut -d' ' -f1 )
+	#----main--------#
+	tmp_fifofile="/tmp/$$.fifo"
+	mkfifo $tmp_fifofile
+
+	exec 6<>$tmp_fifofile
+
+	rm $tmp_fifofile
+
+	for (( i=0;i<$thread;i++ )) ;do
+		echo    
+	done >&6
+
+	while read line; do
+		read -u 6
+		{
+
+			singleThread "${line}" "${out_dir}" &&  {
+				echo -ne "thread#${line} is finished.\n" 
+			} || {
+				echo -ne "thread#${line} error. \n" 
+			}
+			echo >&6
+		} &
+	done <${task_file}
+
+	wait
+	exec 6>&-
+	echo 
+	return 0
+}
+
+####main######
+out_dir=${OUT_DIR}
+
+[ ! -d "${out_dir}" ] && mkdir -p "${out_dir}" 
+
+#---------------------------------------------------------------------
+task_file="${task_file}"
+#thread=50
+#---------------------------------------------------------------------
+if [ ! -f "$task_file" ] ; then
+	usage
+fi
+
+mutiThread "${task_file}" "${thread}" "${out_dir}"
+exit
