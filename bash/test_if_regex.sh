@@ -1,5 +1,5 @@
-for file in *
-do
+#!/bin/bash
+for file in * ; do
 	reular='(.*)\.(sh)'
 	if [[ $file =~ $reular ]]; then
 		echo $file
