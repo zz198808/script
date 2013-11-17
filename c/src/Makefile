@@ -1,4 +1,5 @@
 CC=gcc
+
 OBJECTS = main.o
 TARGET  = hello
 
