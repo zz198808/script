@@ -1,3 +1,6 @@
 bash/tasktmp/*
 */cache/*
 .svn/*
+*.o
+hello
+*.h
