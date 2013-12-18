@@ -1,0 +1,261 @@
+#!/bin/bash - 
+#===============================================================================
+#
+#          FILE: mcctrl.sh
+# 
+#         USAGE: ./mcctrl.sh 
+# 
+#   DESCRIPTION: 
+# 
+#       OPTIONS: ---
+#  REQUIREMENTS: ---
+#          BUGS: ---
+#         NOTES: ---
+#        AUTHOR: DongYuezhao (Dolfly), dolfly@foxmail.com
+#  ORGANIZATION: dongyuezhao.cn
+#       CREATED: 2013/09/18 22时49分52秒 CST
+#      REVISION: 0.1.0
+#===============================================================================
+
+set -o nounset                              # Treat unset variables as an error
+#set -x
+
+
+###GLOBAL SETTING
+### config
+DEFAULT=( '127.0.0.1:11211')
+DH_YINGSHI=('127.0.0.1:11211')
+
+###default global setting#{{{
+TMP_FILE_KEYS=$(mktemp -t keys)
+G_D_SRV='DEFAULT'
+G_D_CMD='stats'
+G_D_KEY=''
+G_D_VAL=''
+#}}}
+
+###FUNCTIONS 
+
+###util function
+
+function usage () { #{{{
+	str_usage="Usage:\n \
+$0 [-hspck] \n \
+[-s]\t <server> array name that the memcached's host:ip is defined in . \n \
+[-c]\t <command> \n
+\t\tstats \n \
+\t\tset_key -k <key> \n \
+\t\tget_key -k <key> \n \
+\t\tflush_all  \n \
+\t\tpurge -k <key>>  \n \
+\t\tset -k <key> -v <val>  \n \
+\
+[-k]\t key or prefix key. need for some command \n
+[-v]\t val. need for some command\n"
+echo -e "${str_usage}"
+exit 1
+}	# ----------  end of function usage  ----------#}}}
+
+function sendmsg () { #{{{
+	printf "$1\r\n" >&8
+	output
+}	# ----------  end of function sendmsg  ----------#}}}
+
+function output () { #{{{
+	while read -u 8 -d $'\r' name ;do
+		if [ "${name}" == "END" -o "${name}" == "ERROR" -o "${name}" == "STORED" -o "${name}" == "OK" ] ; then
+			break
+		fi
+		echo ${name}
+	done
+}	# ----------  end of function output  ----------#}}}
+
+function open_conn () { #{{{
+	mcserver=$1
+	mcport=$2
+
+	exec 8<>/dev/tcp/${mcserver}/${mcport}
+	if [ "$?" != 0 ] ; then 
+		echo "open ${mcserver} ${mcport} fail!"
+		return $?
+	fi	
+	return 0
+}	# ----------  end of function open_conn  ----------#}}}
+
+function close_conn () { #{{{
+	exec 8<&-
+	exec 8>&-
+}	# ----------  end of function close_conn  ----------#}}}
+
+function hsize () {  #{{{
+	if [[ $1 =~ ^[1-9][0-9]*$ ]] ; then
+		hsize_s=$1
+		hsize_s_len=${#hsize_s}
+		if (( hsize_s_len > 32 )) ; then
+			echo "the <integer> is not valid!"
+			return 2
+		fi
+	else
+		echo "usage: hsize <integer> "
+		return 1
+	fi
+
+	hsize_dw=( '\033[32mB\033[0m' '\033[32mKB\033[0m' '\033[32mMB\033[0m' '\033[32mGB\033[0m' '\033[32mTB\033[0m' '\033[32mPB\033[0m' '\033[32mEB\033[0m' '\033[32mZB\033[0m' '\033[32mYB\033[0m' '\033[32mBB\033[0m' '\033[32mNB\033[0m' '\033[32mDB\033[0m' '\033[32mxB\033[0m' )
+	hsize_s_str=''
+
+	for hsize_sdw in ${hsize_dw[@]} ; do
+		hsize_s_len=${#hsize_s}
+		if (( hsize_s_len > 9 )) ; then
+			hsize_y=$(echo "scale=0;$hsize_s % 1024 " |bc )
+			hsize_s=$(echo "scale=0;$hsize_s / 1024 " |bc ) 
+			hsize_s_str="${hsize_y}${hsize_sdw}${hsize_s_str}"
+		else
+			if (( hsize_s < 1024 )) ; then
+				hsize_s_str="${hsize_s}${hsize_sdw}${hsize_s_str}"
+				break
+			else
+				hsize_y=$(( hsize_s % 1024 ))
+				hsize_s=$(( hsize_s / 1024 )) 
+				hsize_s_str="${hsize_y}${hsize_sdw}${hsize_s_str}"
+			fi
+		fi
+	done
+	echo -e ${hsize_s_str}
+	return 0
+}
+#}}}
+
+###command function
+
+function stats () { #{{{
+	sendmsg "stats"
+	sendmsg "quit"
+}	# ----------  end of function stats  ----------#}}}
+
+function flush_all () { #{{{
+	sendmsg "flush_all"
+	sendmsg "quit"
+}	# ----------  end of function flush_all  ----------#}}}
+
+function list_items_num () { #{{{
+	sendmsg "stats items"
+	sendmsg "quit"
+}	# ----------  end of function list_items_num  ----------#}}}
+
+function get_last_item_id () { #{{{
+	lastId=$(list_items_num | tail -n 1 | awk -F':' '{print $2}') 
+	echo $lastId
+	return 0
+}	# ----------  end of function get_last_item_id  ----------#}}}
+
+function list_all_key () { #{{{
+	tmp_file=${TMP_FILE_KEYS:=/tmp/keys.tmp}
+	>${tmp_file}
+	max_item_num=$(get_last_item_id)
+	for i in `seq 1 ${max_item_num}` ; do
+		sendmsg "stats cachedump ${i} 0 "
+	done>>${tmp_file}
+
+	sed -i '/^$/d' ${tmp_file}
+}	# ----------  end of function list_all_key  ----------#}}}
+
+function get_key () { #{{{
+	data=$(sendmsg "get $1")
+	sendmsg "quit"
+	echo $data | cut -d' ' -f 5 | base64 -D
+}	# ----------  end of function get_key  ----------#}}}
+
+function set_key () { #{{{
+	key=$1
+	val=$(echo $2 | base64)
+	len=${#val}
+	flag=100
+	expire=0
+	sendmsg "set ${key} ${flag} ${expire} ${len}\r\n${val}"
+	sendmsg "quit"
+}	# ----------  end of function set_key  ----------#}}}
+
+function purge () { #{{{
+	sendmsg "delete $1 \r\n"
+	sendmsg "quit"
+}	# ----------  end of function purge  ----------#}}}
+
+function del_key () { #{{{
+	purge $1	
+}   # ----------  end of function del_key -----------#}}}
+
+function super_purge () { #{{{
+	list_all_key
+	tmp_file=${TMP_FILE_KEYS:=/tmp/keys.tmp}
+	if [ -e "${tmp_file}" ] ; then
+		grep "$1" ${tmp_file}>${tmp_file}.bak
+		mv ${tmp_file}{.bak,}
+	else
+		return 1
+	fi
+	while read keys ; do
+		sendmsg "delete ${keys} \r\n"
+	done<${tmp_file}
+
+}	# ----------  end of function supper_purge  ----------#}}}
+
+function get_items () {  #{{{
+	sendmsg "stats items" 
+	sendmsg "quit"
+}	# ----------  end of function get_items  ----------
+#}}}
+
+
+###MAIN#{{{
+
+###init setting #{{{
+MCSRV=${MCSRV:=${G_D_SRV}}
+COMMAND=${COMMAND:=${G_D_CMD}}
+KEY=${KEY:=${G_D_KEY}}
+VAL=${VAL:=${G_D_KEY}}
+#}}}
+
+##deal param#{{{
+while getopts "s:c:k:v:" flag ; do
+	case ${flag} in
+		s)
+			MCSRV=$(echo ${OPTARG:=${G_D_SRV}} | tr '[a-z]' '[A-Z]' )
+			;;
+		c)
+			COMMAND=${OPTARG:=${G_D_CMD}}
+			;;
+
+		k)
+			KEY=${OPTARG:=${G_D_KEY}}
+			;;
+		v)
+			VAL=${OPTARG:=${G_D_KEY}}
+			;;
+		*)
+			usage
+			;;
+	esac    # --- end of case ---
+
+done
+
+CUR_SRV_ARR=( $(eval 'echo ${'"${MCSRV}"'[*]}') ) 
+#}}}
+
+###exec command #{{{
+for cur_svr_str in ${CUR_SRV_ARR[@]} ; do
+	cur_svr_ip=$(echo $cur_svr_str |cut -d: -f1)
+	cur_svr_port=$(echo $cur_svr_str |cut -d: -f2)
+	echo "DEAL ${cur_svr_str} "
+	echo 
+	open_conn $cur_svr_ip $cur_svr_port 	
+	eval ${COMMAND} "${KEY}" "'${VAL}'"
+	close_conn
+
+	echo "DEAL END ${cur_svr_str} ------"
+	echo 
+done
+#}}}
+
+exit 0
+#}}}
+
